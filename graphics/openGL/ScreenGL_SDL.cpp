@@ -188,7 +188,8 @@
  */
 ScreenGL *currentScreenGL;
 
-
+// the current active joyStick, can be NULL if no joystick was opened
+SDL_Joystick *joyStick = NULL;
 
 // maps SDL-specific special (non-ASCII) key-codes (SDLK) to minorGems key 
 // codes (MG_KEY)
@@ -212,6 +213,7 @@ void callbackKeyboard( unsigned char  inKey, int inX, int inY );
 void callbackMotion( int inX, int inY );
 void callbackPassiveMotion( int inX, int inY );
 void callbackMouse( int inButton, int inState, int inX, int inY );
+void callbackJoyEvent(int event, int value, int value2 = 0); // controller support.
 void callbackPreDisplay();
 void callbackDisplay();
 void callbackIdle();
@@ -242,7 +244,8 @@ ScreenGL::ScreenGL( int inWide, int inHigh, char inFullScreen,
 	  mMouseHandlerVector( new SimpleVector<MouseHandlerGL*>() ),
 	  mKeyboardHandlerVector( new SimpleVector<KeyboardHandlerGL*>() ),
 	  mSceneHandlerVector( new SimpleVector<SceneHandlerGL*>() ),
-	  mRedrawListenerVector( new SimpleVector<RedrawListenerGL*>() ) {
+	  mRedrawListenerVector( new SimpleVector<RedrawListenerGL*>() ),
+      mJoyHandlerVector( new SimpleVector<JoyHandlerGL*>() ) { // controller support. 
 
     mWantToMimimize = false;
     mMinimized = false;
@@ -520,7 +523,8 @@ ScreenGL::~ScreenGL() {
 	delete mMouseHandlerVector;
 	delete mKeyboardHandlerVector;
 	delete mSceneHandlerVector;
-
+    delete mJoyHandlerVector;
+    
     if( mRecordingEvents && mRecordingOrPlaybackStarted ) {    
         writeEventBatchToFile();
         }
@@ -1683,6 +1687,26 @@ void ScreenGL::start() {
     Time::getCurrentTime( &frameStartSec, &frameStartMSec );
 
     
+    // controller support - initialize joystick:
+    SDL_Init(SDL_INIT_JOYSTICK);
+    printf("looking for joystick: ");
+    if (SDL_NumJoysticks() > 0)
+    {
+        joyStick = SDL_JoystickOpen(0); // open joystick
+        if (joyStick)
+        {
+            printf("opened joystick 0\n");
+            printf("Name: %s\n", SDL_JoystickName(0));
+            SDL_JoystickEventState(SDL_ENABLE); // enable events
+        } 
+        else
+            fprintf(stderr, "couldn't open Joystick 0\n");
+    } else 
+    {
+        printf("no joysticks found.\n");
+    }
+
+>>>>>>> Stashed changes
     // main loop
     while( true ) {
         
@@ -1874,6 +1898,23 @@ void ScreenGL::start() {
                 
 
             switch( event.type ) {
+                // controller support:
+                case SDL_JOYBUTTONDOWN:
+                    callbackJoyEvent(SDL_JOYBUTTONDOWN, event.jbutton.button);
+                    break;
+                case SDL_JOYBUTTONUP:
+                    callbackJoyEvent(SDL_JOYBUTTONUP, event.jbutton.button);
+                    break;
+                case SDL_JOYAXISMOTION:
+                    callbackJoyEvent(SDL_JOYAXISMOTION, event.jaxis.axis, event.jaxis.value);
+                    break;
+                case SDL_JOYHATMOTION:
+                    if (event.jhat.hat == JOY_DPAD)
+                        callbackJoyEvent(SDL_JOYHATMOTION, event.jhat.value);
+                    break;
+                case SDL_JOYBALLMOTION:
+                    break;
+
                 case SDL_QUIT: {
                     // map to 27, escape
                     int mouseX, mouseY;
@@ -2182,7 +2223,10 @@ void ScreenGL::start() {
         
         
         }
-    
+        
+        // controller support - close joystick if opened:
+        if (SDL_JoystickOpened(0))
+            SDL_JoystickClose(joyStick);
     }
 
 
@@ -2471,6 +2515,89 @@ void callbackResize( int inW, int inH ) {
                 bigDimension );
     }
 
+// controller support:
+void callbackJoyEvent(int event, int value, int value2) {
+    printf(">>> joyevent: %d %d %d\n", event, value, value2);
+    // remember and combine axis values:
+    static bool thumbstickL, thumbstickR = false;
+    static int lx, ly, rx, ry = 0;
+    if (event == SDL_JOYAXISMOTION) {
+        if (value == JOY_L_THUMB_X)
+            lx = value2;
+        else if (value == JOY_L_THUMB_Y)
+            ly = value2;
+        else if (value == JOY_R_THUMB_X)
+            rx = value2;
+        else if (value == JOY_R_THUMB_Y)
+            ry = value2;
+    }
+
+    if( currentScreenGL->mRecordingEvents &&
+        currentScreenGL->mRecordingOrPlaybackStarted ) {
+
+        char *eventString = autoSprintf( "jy %d %d %d", event, value, value2);
+
+        currentScreenGL->mUserEventBatch.push_back( eventString );
+        }
+
+    // fire to all handlers
+    int h;
+    // flag those that exist right now
+    // because handlers might remove themselves or add new handlers,
+    // and we don't want to fire to those that weren't present when
+    // callback was called
+
+    for( h=0; h<currentScreenGL->mJoyHandlerVector->size(); h++ ) {
+        JoyHandlerGL *handler 
+            = *( currentScreenGL->mJoyHandlerVector->getElement( h ) );
+        handler->mHandlerFlagged = true;
+        }
+
+    for( h=0; h<currentScreenGL->mJoyHandlerVector->size(); h++ ) {
+        JoyHandlerGL *handler 
+            = *( currentScreenGL->mJoyHandlerVector->getElement( h ) );
+
+        if( handler->mHandlerFlagged ) {
+
+            // dispatch joystick event:
+            if (event == SDL_JOYBUTTONDOWN)
+                handler->joyButtonDown(value);
+            else if (event == SDL_JOYBUTTONUP)
+                handler->joyButtonUp(value);
+            else if (event == SDL_JOYHATMOTION)
+                value == 0 ? handler->joyDPadUp() : handler->joyDPadDown(value);
+            else if (event == SDL_JOYAXISMOTION) {
+                if (value == JOY_L_RUDDER || value == JOY_R_RUDDER) {
+                    handler->joyRudder(value, value2);
+                } else if (value == JOY_L_THUMB_X || value == JOY_L_THUMB_Y) {
+                    if (abs(lx) > JOY_DEADZONE || abs(ly) > JOY_DEADZONE) { // deadzone
+                        thumbstickL = true;
+                        handler->joyThumbstick(JOY_L_THUMB, lx, ly);
+                    } else if (thumbstickL) {
+                        thumbstickL = false;
+                        handler->joyThumbstick(JOY_L_THUMB, 0, 0);
+                    }
+                } else if (value == JOY_R_THUMB_X || value == JOY_R_THUMB_Y) {
+                    if (abs(rx) > JOY_DEADZONE || abs(ry) > JOY_DEADZONE) { // deadzone
+                        thumbstickR = true;
+                        handler->joyThumbstick(JOY_R_THUMB, rx, ry);
+                    } else if (thumbstickR) {
+                        thumbstickR = false;
+                        handler->joyThumbstick(JOY_R_THUMB, 0, 0);
+                    }
+                }
+            }
+        }
+    }
+
+    // deflag for next time
+    for( h=0; h<currentScreenGL->mJoyHandlerVector->size(); h++ ) {
+        JoyHandlerGL *handler 
+            = *( currentScreenGL->mJoyHandlerVector->getElement( h ) );
+        handler->mHandlerFlagged = false;
+        }
+
+}
 
 
 void callbackKeyboard( unsigned char inKey, int inX, int inY ) {
@@ -3083,3 +3210,8 @@ char mapSDLKeyToASCII( int inSDLKey ) {
         }
     }
  
+
+SDL_Joystick *getJoystick()
+{
+    return joyStick;
+}

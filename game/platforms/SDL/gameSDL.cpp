@@ -39,6 +39,7 @@ int main( int inArgCount, char **inArgs ) {
 
 #include "minorGems/graphics/openGL/SceneHandlerGL.h"
 #include "minorGems/graphics/openGL/MouseHandlerGL.h"
+#include "minorGems/graphics/openGL/JoyHandlerGL.h" // controller support.
 #include "minorGems/graphics/openGL/KeyboardHandlerGL.h"
 #include "minorGems/ui/event/ActionListener.h"
 
@@ -386,7 +387,7 @@ static void takeScreenShot();
 
 class GameSceneHandler :
     public SceneHandlerGL, public MouseHandlerGL, public KeyboardHandlerGL,
-    public RedrawListenerGL, public ActionListener  { 
+    public RedrawListenerGL, public ActionListener, public JoyHandlerGL  { 
 
 	public:
 
@@ -431,6 +432,30 @@ class GameSceneHandler :
         virtual void mouseDragged( int inX, int inY );
         virtual void mousePressed( int inX, int inY );
         virtual void mouseReleased( int inX, int inY );
+
+        // controller support:
+        // we put the handlers inside the GameSceneHandler because we may
+        // use the controller to interact with the game UI(not yet implemented)
+        // not just in LivingLifePage
+        virtual void joyButtonDown(int button) {
+            ::joyButtonDown(button);
+        }
+        virtual void joyButtonUp(int button) {
+            ::joyButtonUp(button);
+        }
+        virtual void joyDPadDown(int dir) {
+            ::joyDPadDown(dir);
+        }
+        virtual void joyDPadUp(void) {
+            ::joyDPadUp();
+        }
+        virtual void joyRudder(int rudder, int pressure) {
+            ::joyRudder(rudder, pressure);
+        }
+        virtual void joyThumbstick(int stick, int x, int y) {
+            ::joyThumbstick(stick, x, y);
+        }
+
 
         // implements the KeyboardHandlerGL interface
         virtual char isFocused() {
@@ -2449,6 +2474,7 @@ int mainFunction( int inNumArgs, char **inArgs ) {
         // handle events right away
         screen->addMouseHandler( sceneHandler );
         screen->addKeyboardHandler( sceneHandler );
+        screen->addJoyHandler(sceneHandler); // controller support.
 
         if( screen->isPlayingBack() ) {
             
@@ -2529,6 +2555,7 @@ GameSceneHandler::~GameSceneHandler() {
     mScreen->removeMouseHandler( this );
     mScreen->removeSceneHandler( this );
     mScreen->removeRedrawListener( this );
+    mScreen->removeJoyHandler(this); // controller support.
 
     if( demoMode ) {
         // panel has not freed itself yet
@@ -2919,6 +2946,7 @@ void GameSceneHandler::drawScene() {
 
             mScreen->addMouseHandler( this );
             mScreen->addKeyboardHandler( this );
+            screen->addJoyHandler(this); // controller support.
 
             screen->startRecordingOrPlayback();
             }

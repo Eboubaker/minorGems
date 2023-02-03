@@ -143,6 +143,14 @@ void drawFrame( char inUpdate );
 
 
 
+// controller support
+void joyButtonDown(int button);
+void joyButtonUp(int button);
+void joyDPadDown(int dir);
+void joyDPadUp(void);
+void joyRudder(int rudder, int pressure);
+void joyThumbstick(int stick, int x, int y);
+
 // these are all in world coordinates based on what is set
 // in setViewCenterPosition and setViewSize below
 
